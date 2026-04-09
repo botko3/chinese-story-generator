@@ -52,7 +52,7 @@ function formatErrorDetail(detail: unknown): string {
 export async function generateStory(
   body: StoryRequest
 ): Promise<StoryResponse> {
-  const res = await fetch(`${getBaseUrl()} /api/generate-story`, {
+  const res = await fetch(`${getBaseUrl()}/api/generate-story`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
