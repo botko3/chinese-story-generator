@@ -14,15 +14,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import APIConnectionError, APIError, AuthenticationError, OpenAI, RateLimitError
 from pydantic import BaseModel, Field, field_validator
 
 # Load .env from this file's directory so it works whether you run uvicorn from backend/ or repo root.
-_BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv(_BACKEND_DIR / ".env")
+# _BACKEND_DIR = Path(__file__).resolve().parent
+# load_dotenv(_BACKEND_DIR / ".env")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
