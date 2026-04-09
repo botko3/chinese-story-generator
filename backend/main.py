@@ -209,12 +209,12 @@ def _build_user_message(req: StoryRequest) -> str:
     )
 
 
-@app.get("/health")
+@app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/generate-story", response_model=StoryResponse)
+@app.post("/api/generate-story", response_model=StoryResponse)
 async def generate_story(request: StoryRequest) -> StoryResponse:
     client = _get_client()
     user_message = _build_user_message(request)
