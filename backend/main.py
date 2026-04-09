@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 import re
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,28 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+
+# Reuse one client so HTTP keep-alive / connections are pooled (saves RTT on each request).
+_openai_client: OpenAI | None = None
+
+
+def _deepseek_max_tokens() -> int:
+    raw = os.getenv("DEEPSEEK_MAX_TOKENS", "3072").strip()
+    try:
+        n = int(raw)
+        return max(512, min(n, 8192))
+    except ValueError:
+        return 3072
+
+
+def _deepseek_temperature() -> float:
+    raw = os.getenv("DEEPSEEK_TEMPERATURE", "0.65").strip()
+    try:
+        t = float(raw)
+        return max(0.0, min(t, 2.0))
+    except ValueError:
+        return 0.65
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
@@ -61,13 +83,23 @@ app.add_middleware(
 
 
 def _get_client() -> OpenAI:
+    global _openai_client
+    if _openai_client is not None:
+        return _openai_client
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not key:
         raise HTTPException(
             status_code=503,
             detail="Server is not configured: DEEPSEEK_API_KEY is missing in environment.",
         )
-    return OpenAI(api_key=key, base_url=DEEPSEEK_BASE_URL)
+    # timeout: story generation can take tens of seconds
+    _openai_client = OpenAI(
+        api_key=key,
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=180.0,
+        max_retries=2,
+    )
+    return _openai_client
 
 
 SYSTEM_PROMPT = """You are an expert Chinese language educator for ISF Academy (弘立書院) in Hong Kong. Your sole task is to write and structure short Chinese stories for primary school learners (小學生).
@@ -104,6 +136,12 @@ SYSTEM_PROMPT = """You are an expert Chinese language educator for ISF Academy (
 - "vocabulary_list" is an array of objects with keys: "word", "pinyin", "meaning".
 - "questions" is an array of strings.
 - Use UTF-8 Chinese characters correctly; escape any quotes inside strings per JSON rules.
+
+## When the user request JSON has "concise": true (fast mode)
+- Prioritize a **shorter** story body: about **120–220 Chinese characters** (still complete narrative).
+- vocabulary_list: **6 items** (not more than 8).
+- questions: **exactly 3** short questions.
+- Keep pinyin compact if requested (e.g. per phrase) so total JSON is smaller — this **reduces generation latency** because the model emits fewer tokens.
 """
 
 
@@ -114,6 +152,10 @@ class StoryRequest(BaseModel):
     difficulty: int = Field(default=3, ge=1, le=5, description="1=easiest, 5=most challenging.")
     include_pinyin: bool = Field(default=True)
     include_questions: bool = Field(default=True)
+    concise: bool = Field(
+        default=False,
+        description="Shorter story & smaller JSON — fewer output tokens, usually faster.",
+    )
 
     @field_validator("grade", "theme", "vocab_focus", mode="before")
     @classmethod
@@ -195,18 +237,17 @@ def _normalize_story_payload(
 
 
 def _build_user_message(req: StoryRequest) -> str:
-    return json.dumps(
-        {
-            "task": "generate_story",
-            "grade": req.grade,
-            "theme": req.theme or None,
-            "vocab_focus": req.vocab_focus or None,
-            "difficulty_1_to_5": req.difficulty,
-            "include_pinyin": req.include_pinyin,
-            "include_questions": req.include_questions,
-        },
-        ensure_ascii=False,
-    )
+    payload: dict[str, Any] = {
+        "task": "generate_story",
+        "grade": req.grade,
+        "theme": req.theme or None,
+        "vocab_focus": req.vocab_focus or None,
+        "difficulty_1_to_5": req.difficulty,
+        "include_pinyin": req.include_pinyin,
+        "include_questions": req.include_questions,
+        "concise": req.concise,
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @app.get("/api/health")
@@ -219,18 +260,32 @@ async def generate_story(request: StoryRequest) -> StoryResponse:
     client = _get_client()
     user_message = _build_user_message(request)
 
+    max_out = _deepseek_max_tokens()
+    if request.concise:
+        max_out = min(max_out, 2400)
+
     try:
+        t0 = time.perf_counter()
         completion = client.chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0.75,
-            max_tokens=4096,
+            temperature=_deepseek_temperature(),
+            max_tokens=max_out,
             response_format={"type": "json_object"},
-            stream=False
-
+            stream=False,
+        )
+        elapsed = time.perf_counter() - t0
+        usage = getattr(completion, "usage", None)
+        logger.info(
+            "generate-story: model=%s max_tokens=%s concise=%s elapsed=%.2fs usage=%s",
+            DEEPSEEK_MODEL,
+            max_out,
+            request.concise,
+            elapsed,
+            usage,
         )
     except AuthenticationError as e:
         logger.exception("DeepSeek authentication failed")

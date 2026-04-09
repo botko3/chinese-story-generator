@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   AlertCircle,
   BookOpen,
+  Clock,
   Download,
   Loader2,
   Sparkles,
@@ -70,16 +71,33 @@ export function StoryGeneratorApp() {
   const [difficulty, setDifficulty] = React.useState([3]);
   const [includePinyin, setIncludePinyin] = React.useState(true);
   const [includeQuestions, setIncludeQuestions] = React.useState(true);
+  const [concise, setConcise] = React.useState(true);
 
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [story, setStory] = React.useState<StoryResponse | null>(null);
+  /** 從發起到收到 HTTP 回應本體（含 JSON 解析前由 fetch 完成） */
+  const [apiMs, setApiMs] = React.useState<number | null>(null);
+  /** 從收到資料到 React 完成本次 DOM 更新（useLayoutEffect ≈ commit 後） */
+  const [renderMs, setRenderMs] = React.useState<number | null>(null);
+  const afterApiMarkRef = React.useRef<number | null>(null);
+
+  React.useLayoutEffect(() => {
+    if (!story || afterApiMarkRef.current === null) return;
+    const start = afterApiMarkRef.current;
+    afterApiMarkRef.current = null;
+    setRenderMs(performance.now() - start);
+  }, [story]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setApiMs(null);
+    setRenderMs(null);
+    afterApiMarkRef.current = null;
     setLoading(true);
     setStory(null);
+    const t0 = performance.now();
     try {
       const d = difficulty[0] ?? 3;
       const res = await generateStory({
@@ -89,9 +107,15 @@ export function StoryGeneratorApp() {
         difficulty: d,
         include_pinyin: includePinyin,
         include_questions: includeQuestions,
+        concise,
       });
+      const t1 = performance.now();
+      setApiMs(t1 - t0);
+      afterApiMarkRef.current = t1;
       setStory(res);
     } catch (err) {
+      setApiMs(performance.now() - t0);
+      setRenderMs(null);
       setError(err instanceof Error ? err.message : "生成失敗");
     } finally {
       setLoading(false);
@@ -226,9 +250,6 @@ export function StoryGeneratorApp() {
                 />
                 <Label htmlFor="pinyin" className="font-normal leading-snug">
                   包含拼音（注音樣式）
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Pinyin / ruby-style where possible
-                  </span>
                 </Label>
               </div>
               <div className="flex items-center gap-2.5">
@@ -239,8 +260,18 @@ export function StoryGeneratorApp() {
                 />
                 <Label htmlFor="questions" className="font-normal leading-snug">
                   包含閱讀理解問題
+                </Label>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <Checkbox
+                  id="concise"
+                  checked={concise}
+                  onCheckedChange={(v) => setConcise(v === true)}
+                />
+                <Label htmlFor="concise" className="font-normal leading-snug">
+                  快速模式（較短故事，通常更快）
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Comprehension questions
+                    減少模型輸出字數，可明顯縮短等待時間
                   </span>
                 </Label>
               </div>
@@ -282,7 +313,14 @@ export function StoryGeneratorApp() {
               <Alert variant="destructive" className="mb-6 border-destructive/40">
                 <AlertCircle className="size-4" />
                 <AlertTitle>無法生成</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
+                <AlertDescription>
+                  {error}
+                  {apiMs != null && (
+                    <span className="mt-2 block font-mono text-xs tabular-nums opacity-90">
+                      本次請求耗時 API {apiMs.toFixed(0)} ms
+                    </span>
+                  )}
+                </AlertDescription>
               </Alert>
             )}
 
@@ -334,6 +372,23 @@ export function StoryGeneratorApp() {
                     {!story.pinyin_enabled && (
                       <span className="rounded-full bg-muted px-2 py-0.5">
                         純中文正文
+                      </span>
+                    )}
+                    {(apiMs != null || renderMs != null) && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 font-mono tabular-nums text-foreground/90"
+                        title="API：網路請求至收到回應。畫面更新：收到資料後至 React 完成 DOM 更新（不含瀏覽器繪製像素）。"
+                      >
+                        <Clock className="size-3.5 shrink-0 opacity-70" aria-hidden />
+                        {apiMs != null && (
+                          <span>API {apiMs.toFixed(0)} ms</span>
+                        )}
+                        {apiMs != null && renderMs != null && (
+                          <span className="text-muted-foreground">·</span>
+                        )}
+                        {renderMs != null && (
+                          <span>畫面 {renderMs.toFixed(0)} ms</span>
+                        )}
                       </span>
                     )}
                   </div>

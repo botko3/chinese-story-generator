@@ -1,9 +1,38 @@
 import type { StoryRequest, StoryResponse } from "@/lib/types";
 
+function isLocalDevHost(hostname: string): boolean {
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]")
+    return true;
+  // Typical LAN dev servers — keep http:// if user explicitly set it
+  if (/^192\.168\./.test(hostname)) return true;
+  if (/^10\./.test(hostname)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+  return false;
+}
+
 function getBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-  );
+  const fallback = "http://localhost:8000";
+  const raw = (process.env.NEXT_PUBLIC_API_URL ?? fallback).trim();
+  if (!raw) return fallback;
+  const noTrailing = raw.replace(/\/+$/, "");
+  // Without "https://" the browser treats the string as a *relative* path on the
+  // current origin (e.g. localhost:3000), producing wrong URLs like
+  // http://localhost:3000/api.example.com/...
+  let urlStr = noTrailing;
+  if (!/^https?:\/\//i.test(urlStr)) {
+    urlStr = `https://${urlStr}`;
+  }
+  try {
+    const u = new URL(urlStr);
+    // Railway / most hosts redirect http → https. Browsers do not follow redirects
+    // on CORS preflight (OPTIONS), so remote http:// APIs must use https:// directly.
+    if (u.protocol === "http:" && !isLocalDevHost(u.hostname)) {
+      u.protocol = "https:";
+    }
+    return u.href.replace(/\/$/, "");
+  } catch {
+    return urlStr;
+  }
 }
 
 function formatErrorDetail(detail: unknown): string {

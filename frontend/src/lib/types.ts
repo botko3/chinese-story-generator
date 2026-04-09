@@ -5,6 +5,8 @@ export type StoryRequest = {
   difficulty: number;
   include_pinyin: boolean;
   include_questions: boolean;
+  /** Shorter story JSON — fewer tokens, usually faster (backend "concise" mode). */
+  concise: boolean;
 };
 
 export type VocabularyItem = {
