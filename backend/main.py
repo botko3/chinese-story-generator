@@ -57,14 +57,22 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    # Production frontend (add more via CORS_ORIGINS on Railway / .env)
+    "https://chinese-story-generator.vercel.app",
 ]
 
 
 def _parse_cors_origins() -> list[str]:
+    """Merge defaults with CORS_ORIGINS so local dev keeps working when you add Vercel etc."""
     raw = os.getenv("CORS_ORIGINS", "").strip()
-    if not raw:
-        return DEFAULT_CORS_ORIGINS
-    return [o.strip() for o in raw.split(",") if o.strip()]
+    extra = [o.strip() for o in raw.split(",") if o.strip()]
+    merged: list[str] = []
+    seen: set[str] = set()
+    for o in [*DEFAULT_CORS_ORIGINS, *extra]:
+        if o not in seen:
+            seen.add(o)
+            merged.append(o)
+    return merged
 
 
 app = FastAPI(
